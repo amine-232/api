@@ -1,17 +1,10 @@
 export class OpencodeClient {
-  constructor(baseUrl, password) {
+  constructor(baseUrl) {
     this.baseUrl = baseUrl.replace(/\/$/, "")
-    this.password = password || ""
-  }
-
-  get basicAuth() {
-    if (!this.password) return ""
-    return "Basic " + Buffer.from(`opencode:${this.password}`).toString("base64")
   }
 
   async request(method, path, body) {
     const headers = {}
-    if (this.basicAuth) headers["Authorization"] = this.basicAuth
     if (body) headers["Content-Type"] = "application/json"
 
     const res = await fetch(`${this.baseUrl}${path}`, {
@@ -28,9 +21,7 @@ export class OpencodeClient {
 
   async health() {
     try {
-      const res = await fetch(`${this.baseUrl}/api/health`, {
-        headers: this.basicAuth ? { Authorization: this.basicAuth } : {},
-      })
+      const res = await fetch(`${this.baseUrl}/api/health`)
       return await res.json()
     } catch {
       return await this.request("GET", "/health")
