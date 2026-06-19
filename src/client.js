@@ -3,22 +3,15 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 export class OpencodeClient {
-  constructor(baseUrl, password) {
+  constructor(baseUrl) {
     this.baseUrl = baseUrl.replace(/\/$/, "")
-    this.password = password || ""
-  }
-
-  get basicAuth() {
-    if (!this.password) return ""
-    return "Basic " + Buffer.from(`opencode:${this.password}`).toString("base64")
   }
 
   async request(method, path, body) {
     const headers = {}
-    if (this.basicAuth) headers["Authorization"] = this.basicAuth
     if (body) headers["Content-Type"] = "application/json"
 
-    // Add /api/ prefix to all API requests
+    // Add /api/ prefix for API endpoints
     const apiPath = path.startsWith('/api') ? path : `/api${path}`
     
     const res = await fetch(`${this.baseUrl}${apiPath}`, {
