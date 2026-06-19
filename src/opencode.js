@@ -1,4 +1,6 @@
 import { spawn, execSync } from "node:child_process"
+import { join } from "node:path"
+import { existsSync } from "node:fs"
 
 let proc = null
 let serverUrl = ""
@@ -28,6 +30,7 @@ export async function startServer(options = {}) {
     proc = spawn(binary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env },
+      shell: true,
     })
 
     let output = ""
@@ -78,10 +81,31 @@ export async function stopServer() {
 }
 
 export function findBinary() {
-  try {
-    execSync("opencode --version", { stdio: "pipe" })
-    return "opencode"
-  } catch {
-    return null
+  const candidates = ["opencode", "lildax"]
+
+  // Search known global bin directories for the full path first (spawn needs exact path).
+  const globalDirs = [].concat(
+    process.env.APPDATA ? join(process.env.APPDATA, "npm") : [],
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "hermes", "node") : [],
+  )
+  for (const dir of globalDirs) {
+    for (const name of candidates) {
+      for (const ext of [".cmd", ".exe", ""]) {
+        const full = join(dir, `${name}${ext}`)
+        if (existsSync(full)) return full
+      }
+    }
   }
+
+  // Fall back to bare command name (works if PATH is available).
+  for (const name of candidates) {
+    try {
+      execSync(`${name} --version`, { stdio: "pipe" })
+      return name
+    } catch {
+      // try next name
+    }
+  }
+
+  return null
 }
