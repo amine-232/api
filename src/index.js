@@ -1,108 +1,116 @@
-import { serve } from "@hono/node-server"
-import { Hono } from "hono"
-import { cors } from "hono/cors"
-import { logger } from "hono/logger"
-import { OpencodeClient } from "./client.js"
-import { getServerUrl } from "./opencode.js"
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { OpencodeClient } from "./client.js";
+import { startServer, getServerUrl } from "./opencode.js";
 
-const app = new Hono()
-app.use("*", logger())
-app.use("*", cors())
+const app = new Hono();
+app.use("*", logger());
+app.use("*", cors());
 
-let client
+let client;
 
-function getClient() {
+const getClient = () => {
   if (!client) client = new OpencodeClient(getServerUrl())
   return client
 }
 
 app.get("/health", async (c) => {
   try {
-    const health = await getClient().health()
-    return c.json({ ...health, opencode: "connected" })
+    const health = await getClient().health();
+    return c.json({ ...health, opencode: "connected" });
   } catch (e) {
-    return c.json({ status: "ok", mode: "standalone", message: "no upstream opencode server" })
+    return c.json(
+      { status: "error", opencode: "disconnected", message: String(e) },
+      503,
+    );
   }
-})
-
-function parseModel(input) {
-  if (!input) return undefined
-  if (typeof input === "object" && input.id) return input
-  if (typeof input === "string") {
-    const idx = input.indexOf("/")
-    return idx === -1 ? { id: input, providerID: input } : { id: input.slice(idx + 1), providerID: input.slice(0, idx) }
-  }
-  return input
-}
+});
 
 app.get("/agents", async (c) => {
-  try { return c.json(await getClient().listAgents()) }
-  catch { return c.json([]) }
-})
+  const agents = await getClient().listAgents();
+  return c.json(agents);
+});
 
 app.get("/providers", async (c) => {
-  try { return c.json(await getClient().listProviders()) }
-  catch { return c.json([]) }
-})
+  const providers = await getClient().listProviders();
+  return c.json(providers);
+});
 
 app.get("/models", async (c) => {
-  try { return c.json(await getClient().listModels()) }
-  catch { return c.json([]) }
-})
+  const models = await getClient().listModels();
+  return c.json(models);
+});
 
-app.post("/sessions", async (c) => {
-  const body = await c.req.json().catch(() => ({}))
-  try {
-    const session = await getClient().createSession({
-      directory: body.directory,
-      agent: body.agent,
-      model: parseModel(body.model),
-    })
-    return c.json(session, 201)
-  } catch (e) {
-    return c.json({ id: Date.now().toString(36), created: true, mode: "standalone" }, 201)
-  }
-})
+app.post("/createSession", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const session = await getClient().createSession({
+    directory: body.directory,
+    agent: body.agent,
+    model: body.model,
+  });
+  return c.json(session, 201);
+});
 
 app.get("/sessions", async (c) => {
-  try { return c.json(await getClient().listSessions()) }
-  catch { return c.json([]) }
-})
+  const sessions = await getClient().listSessions();
+  return c.json(sessions);
+});
 
 app.get("/sessions/:id", async (c) => {
-  try { return c.json(await getClient().getSession(c.req.param("id"))) }
-  catch { return c.json({ id: c.req.param("id"), notFound: true }, 404) }
-})
+  const session = await getClient().getSession(c.req.param("id"));
+  return c.json(session);
+});
 
 app.post("/sessions/:id/prompt", async (c) => {
-  const body = await c.req.json()
-  const sessionId = c.req.param("id")
-  try {
-    return c.json(await getClient().prompt({ sessionId, parts: body.parts, text: body.text }))
-  } catch (e) {
-    return c.json({ text: "[mock] Received prompt for " + sessionId + ": " + (body.text || "") })
-  }
-})
+  const body = await c.req.json();
+  const result = await getClient().prompt({
+    sessionId: c.req.param("id"),
+    parts: body.parts || [{ type: "text", text: body.text || "" }],
+    agent: body.agent,
+    model: body.model,
+  });
+  return c.json(result);
+});
 
 app.get("/sessions/:id/messages", async (c) => {
-  try { return c.json(await getClient().getMessages(c.req.param("id"))) }
-  catch { return c.json([]) }
-})
+  const messages = await getClient().getMessages(c.req.param("id"));
+  return c.json(messages);
+});
+
+app.post("/sessions/:id/abort", async (c) => {
+  await getClient().abortSession(c.req.param("id"));
+  return c.json({ ok: true });
+});
 
 app.post("/run", async (c) => {
-  const body = await c.req.json()
-  try {
-    return c.json(await getClient().runPrompt({
-      parts: body.parts || [{ type: "text", text: body.text || "" }],
-      directory: body.directory,
-      agent: body.agent,
-      model: parseModel(body.model),
-      sessionId: body.sessionId,
-    }))
-  } catch (e) {
-    return c.json({ text: "[mock] Run result for: " + (body.text || "") })
-  }
-})
+  const body = await c.req.json();
+  const result = await getClient().runPrompt({
+    parts: body.parts || [{ type: "text", text: body.text || "" }],
+    directory: body.directory,
+    agent: body.agent,
+    model: body.model,
+    sessionId: body.sessionId,
+  });
+  return c.json(result);
+});
 
-const PORT = parseInt("3000", 10)
-serve({ port: PORT, hostname: "0.0.0.0", fetch: app.fetch })
+const PORT = parseInt("3000", 10);
+const HOST = "0.0.0.0";
+const OPENCODE_PORT = parseInt("4096", 10);
+
+async function main() {
+  try {
+    console.log("Starting opencode server...");
+    const server = await startServer({ port: OPENCODE_PORT });
+    console.log(`opencode listening at ${server.url}`);
+
+    console.log(`API server starting on http://${HOST}:${PORT}`);
+    serve({ port: PORT, hostname: HOST, fetch: app.fetch });
+  } catch (e) {
+    console.error("Failed to start:", e);
+  }
+}
+
+main();
