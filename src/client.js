@@ -5,17 +5,7 @@ import { join } from "node:path"
 export class OpencodeClient {
   constructor(baseUrl, password) {
     this.baseUrl = baseUrl.replace(/\/$/, "")
-    // If no password provided, try to read from file
-    if (!password) {
-      try {
-        const passwordFile = join(homedir(), ".opencode", "api-password")
-        this.password = readFileSync(passwordFile, "utf-8").trim()
-      } catch {
-        this.password = ""
-      }
-    } else {
-      this.password = password
-    }
+    this.password = password || ""
   }
 
   get basicAuth() {
@@ -28,7 +18,10 @@ export class OpencodeClient {
     if (this.basicAuth) headers["Authorization"] = this.basicAuth
     if (body) headers["Content-Type"] = "application/json"
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    // Add /api/ prefix to all API requests
+    const apiPath = path.startsWith('/api') ? path : `/api${path}`
+    
+    const res = await fetch(`${this.baseUrl}${apiPath}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -41,14 +34,7 @@ export class OpencodeClient {
   }
 
   async health() {
-    try {
-      const res = await fetch(`${this.baseUrl}/api/health`, {
-        headers: this.basicAuth ? { Authorization: this.basicAuth } : {},
-      })
-      return await res.json()
-    } catch {
-      return await this.request("GET", "/health")
-    }
+    return await this.request("GET", "/health")
   }
 
   async listAgents() {
@@ -118,12 +104,17 @@ export class OpencodeClient {
       sessionId = input.sessionId
     } else {
       const session = await this.createSession({
-        directory: input.directory,
+        directory: input.directory || "/home",
         agent: input.agent,
         model: input.model,
       })
       sessionId = session.id ?? session.sessionID
     }
-    return this.prompt({ sessionId, parts: input.parts })
+    return this.prompt({ 
+      sessionId, 
+      parts: input.parts, 
+      agent: input.agent, 
+      model: input.model 
+    })
   }
 }
