@@ -37,12 +37,16 @@ export async function startServer(options = {}) {
   return new Promise((resolve, reject) => {
     const args = ["serve", `--port=${port}`, `--hostname=${hostname}`]
 
+    console.log(`Spawning: ${binary} ${args.join(" ")}`)
+    
     proc = spawn(binary, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
         OPENCODE_SERVER_PASSWORD: password,
       },
+      // Add shell option to ensure it runs properly
+      shell: false,
     })
 
     let output = ""
@@ -52,7 +56,9 @@ export async function startServer(options = {}) {
     }, 15000)
 
     proc.stdout?.on("data", (chunk) => {
-      output += chunk.toString()
+      const data = chunk.toString()
+      output += data
+      console.log("stdout:", data.trim())
       const match = output.match(/listening on (https?:\/\/[^\s]+)/)
       if (match) {
         clearTimeout(timeout)
@@ -62,18 +68,30 @@ export async function startServer(options = {}) {
     })
 
     proc.stderr?.on("data", (chunk) => {
-      output += chunk.toString()
+      const data = chunk.toString()
+      output += data
+      console.log("stderr:", data.trim())
     })
 
     proc.on("exit", (code) => {
       clearTimeout(timeout)
       proc = null
-      reject(new Error(`opencode server exited with code ${code}\n${output}`))
+      console.log(`Process exited with code ${code}`)
+      console.log("Full output:", output)
+      if (code !== 0) {
+        reject(new Error(`opencode server exited with code ${code}\n${output}`))
+      } else {
+        // If it exited with 0 but we didn't get the URL, still reject
+        if (!serverUrl) {
+          reject(new Error("Server exited without providing URL"))
+        }
+      }
     })
 
     proc.on("error", (err) => {
       clearTimeout(timeout)
       proc = null
+      console.error("Spawn error:", err)
       reject(err)
     })
   })
