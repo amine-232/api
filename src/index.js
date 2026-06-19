@@ -12,9 +12,9 @@ app.use("*", cors());
 let client;
 
 const getClient = () => {
-  if (!client) client = new OpencodeClient(getServerUrl());
-  return client;
-};
+  if (!client) client = new OpencodeClient(getServerUrl())
+  return client
+}
 
 app.get("/health", async (c) => {
   try {
