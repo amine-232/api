@@ -15,7 +15,7 @@ export function isRunning() {
 export async function startServer(options = {}) {
   if (isRunning()) return { url: serverUrl }
 
-  const port = options.port || 4096
+  const port = options.port || 4097
   const hostname = options.hostname || "127.0.0.1"
   const password = options.password || randomBytes(16).toString("hex")
   const binary = options.binary || findBinary()
