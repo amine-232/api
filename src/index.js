@@ -1,116 +1,144 @@
-import { serve } from "@hono/node-server";
-import { Hono } from "hono";
-import { cors } from "hono/cors";
-import { logger } from "hono/logger";
-import { OpencodeClient } from "./client.js";
-import { startServer, getServerUrl } from "./opencode.js";
-
-const app = new Hono();
-app.use("*", logger());
-app.use("*", cors());
-
-let client;
-
-const getClient = () => {
-  if (!client) client = new OpencodeClient(getServerUrl())
-  return client
+function parseModel(input) {
+  if (!input) return undefined;
+  if (typeof input === "object" && input.id && input.providerID) return input;
+  if (typeof input === "string") {
+    const idx = input.indexOf("/");
+    if (idx === -1) return { id: input, providerID: input };
+    return { id: input.slice(idx + 1), providerID: input.slice(0, idx) };
+  }
+  return input;
 }
 
-app.get("/health", async (c) => {
-  try {
-    const health = await getClient().health();
-    return c.json({ ...health, opencode: "connected" });
-  } catch (e) {
-    return c.json(
-      { status: "error", opencode: "disconnected", message: String(e) },
-      503,
+function partsToText(parts) {
+  if (!parts) return "";
+  if (typeof parts === "string") return parts;
+  if (Array.isArray(parts)) {
+    return parts.map((p) => (p.type === "text" ? p.text : "")).join("\n");
+  }
+  return String(parts);
+}
+
+export class OpencodeClient {
+  constructor(baseUrl) {
+    this.baseUrl = baseUrl.replace(/\/$/, "");
+  }
+
+  async request(method, path, body) {
+    const headers = { "Content-Type": "application/json" };
+
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      let err;
+      try {
+        const json = await res.json();
+        err = json.message || json.error || JSON.stringify(json);
+      } catch {
+        err = await res.text().catch(() => res.statusText);
+      }
+      throw new Error(`API ${method} ${path}: ${res.status} ${err}`);
+    }
+    return res.json();
+  }
+
+  async health() {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/health`);
+      return await res.json();
+    } catch {
+      return await this.request("GET", "/api/health");
+    }
+  }
+
+  async listAgents() {
+    const result = await this.request("GET", "/api/agent");
+    return result.data ?? result;
+  }
+
+  async listProviders() {
+    const result = await this.request("GET", "/api/provider");
+    return result.data ?? result;
+  }
+
+  async listModels() {
+    const providers = await this.listProviders();
+    const models = [];
+    const all = Array.isArray(providers) ? providers : (providers.all ?? []);
+    for (const p of all) {
+      if (!p.models) continue;
+      for (const [key, m] of Object.entries(p.models)) {
+        models.push({
+          id: key,
+          providerID: p.id,
+          providerName: p.name,
+          name: m.name ?? key,
+          context: m.limit?.context ?? 0,
+          releaseDate: m.release_date ?? "",
+          reasoning: m.reasoning ?? false,
+          experimental: m.experimental,
+          status: m.status,
+        });
+      }
+    }
+    return models;
+  }
+
+  async createSession(input = {}) {
+    const body = {};
+    if (input.directory) body.location = { directory: input.directory };
+    if (input.agent) body.agent = input.agent;
+    if (input.model) body.model = parseModel(input.model);
+    const result = await this.request("POST", "/api/session", body);
+    return result.data ?? result;
+  }
+
+  async listSessions() {
+    const result = await this.request("GET", "/api/session");
+    return result.data ?? result;
+  }
+
+  async getSession(sessionId) {
+    const result = await this.request("GET", `/api/session/${sessionId}`);
+    return result.data ?? result;
+  }
+
+  async prompt(input) {
+    const sessionId = input.sessionId;
+    const text = partsToText(input.parts);
+    const body = { prompt: { text } };
+    if (input.delivery) body.delivery = input.delivery;
+    if (input.resume != null) body.resume = input.resume;
+
+    return await this.request("POST", `/api/session/${sessionId}/prompt`, body);
+  }
+
+  async getMessages(sessionId) {
+    const result = await this.request(
+      "GET",
+      `/api/session/${sessionId}/message`,
     );
+    return result.data ?? result;
   }
-});
 
-app.get("/agents", async (c) => {
-  const agents = await getClient().listAgents();
-  return c.json(agents);
-});
+  async abortSession(sessionId) {
+    return await this.request("POST", `/api/session/${sessionId}/abort`);
+  }
 
-app.get("/providers", async (c) => {
-  const providers = await getClient().listProviders();
-  return c.json(providers);
-});
-
-app.get("/models", async (c) => {
-  const models = await getClient().listModels();
-  return c.json(models);
-});
-
-app.post("/sessions", async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  const session = await getClient().createSession({
-    directory: body.directory,
-    agent: body.agent,
-    model: body.model,
-  });
-  return c.json(session, 201);
-});
-
-app.get("/sessions", async (c) => {
-  const sessions = await getClient().listSessions();
-  return c.json(sessions);
-});
-
-app.get("/sessions/:id", async (c) => {
-  const session = await getClient().getSession(c.req.param("id"));
-  return c.json(session);
-});
-
-app.post("/sessions/:id/prompt", async (c) => {
-  const body = await c.req.json();
-  const result = await getClient().prompt({
-    sessionId: c.req.param("id"),
-    parts: body.parts || [{ type: "text", text: body.text || "" }],
-    agent: body.agent,
-    model: body.model,
-  });
-  return c.json(result);
-});
-
-app.get("/sessions/:id/messages", async (c) => {
-  const messages = await getClient().getMessages(c.req.param("id"));
-  return c.json(messages);
-});
-
-app.post("/sessions/:id/abort", async (c) => {
-  await getClient().abortSession(c.req.param("id"));
-  return c.json({ ok: true });
-});
-
-app.post("/run", async (c) => {
-  const body = await c.req.json();
-  const result = await getClient().runPrompt({
-    parts: body.parts || [{ type: "text", text: body.text || "" }],
-    directory: body.directory,
-    agent: body.agent,
-    model: body.model,
-    sessionId: body.sessionId,
-  });
-  return c.json(result);
-});
-
-const PORT = parseInt("3000", 10);
-const HOST = "0.0.0.0";
-const OPENCODE_PORT = parseInt("4096", 10);
-
-async function main() {
-  try {
-    console.log("Starting opencode server...");
-    const server = await startServer({ port: OPENCODE_PORT });
-    console.log(`opencode listening at ${server.url}`);
-
-    console.log(`API server starting on http://${HOST}:${PORT}`);
-    serve({ port: PORT, hostname: HOST, fetch: app.fetch });
-  } catch (e) {
-    console.error("Failed to start:", e);
+  async runPrompt(input) {
+    let sessionId;
+    if (input.sessionId) {
+      sessionId = input.sessionId;
+    } else {
+      const session = await this.createSession({
+        directory: input.directory,
+        agent: input.agent,
+        model: input.model,
+      });
+      sessionId = session.id ?? session.sessionID;
+    }
+    return this.prompt({ sessionId, parts: input.parts });
   }
 }
-
-main();
