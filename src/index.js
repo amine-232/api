@@ -104,5 +104,5 @@ app.post("/run", async (c) => {
   }
 })
 
-const PORT = parseInt(process.env.PORT || "3000", 10)
+const PORT = parseInt("3000", 10)
 serve({ port: PORT, hostname: "0.0.0.0", fetch: app.fetch })
