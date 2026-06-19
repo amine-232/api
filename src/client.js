@@ -1,20 +1,12 @@
-import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
-
 export class OpencodeClient {
   constructor(baseUrl) {
     this.baseUrl = baseUrl.replace(/\/$/, "")
   }
 
   async request(method, path, body) {
-    const headers = {}
-    if (body) headers["Content-Type"] = "application/json"
+    const headers = { "Content-Type": "application/json" }
 
-    // Add /api/ prefix for API endpoints
-    const apiPath = path.startsWith('/api') ? path : `/api${path}`
-    
-    const res = await fetch(`${this.baseUrl}${apiPath}`, {
+    const res = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -27,7 +19,12 @@ export class OpencodeClient {
   }
 
   async health() {
-    return await this.request("GET", "/health")
+    try {
+      const res = await fetch(`${this.baseUrl}/api/health`)
+      return await res.json()
+    } catch {
+      return await this.request("GET", "/health")
+    }
   }
 
   async listAgents() {
@@ -64,7 +61,6 @@ export class OpencodeClient {
     const body = { directory: input.directory || process.cwd() }
     if (input.agent) body.agent = input.agent
     if (input.model) body.model = input.model
-
     return await this.request("POST", "/session", body)
   }
 
@@ -97,17 +93,12 @@ export class OpencodeClient {
       sessionId = input.sessionId
     } else {
       const session = await this.createSession({
-        directory: input.directory || "/home",
+        directory: input.directory,
         agent: input.agent,
         model: input.model,
       })
       sessionId = session.id ?? session.sessionID
     }
-    return this.prompt({ 
-      sessionId, 
-      parts: input.parts, 
-      agent: input.agent, 
-      model: input.model 
-    })
+    return this.prompt({ sessionId, parts: input.parts })
   }
 }
